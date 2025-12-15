@@ -23,6 +23,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
+    - name: Create dataset
+      run: |
+        python create_dataset.py
+    
+    - name: Verify training script runs
+      run: |
+        python src/train.py
+    
     - name: Lint with flake8
       run: |
         flake8 src/train.py tests/test_train.py --max-line-length=100 --count --show-source --statistics
@@ -30,7 +38,3 @@ jobs:
     - name: Run unit tests with pytest
       run: |
         pytest tests/test_train.py -v --tb=short
-    
-    - name: Verify training script runs
-      run: |
-        python src/train.py
