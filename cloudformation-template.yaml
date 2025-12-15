@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for MLOps Project - EC2 + S3 Deployment'
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair
+  
+  BucketName:
+    Description: S3 bucket name for dataset storage
+    Type: String
+    Default: mlops-assignment2-bucket
+    AllowedPattern: '[a-z0-9\-]*'
+    ConstraintDescription: must be a valid S3 bucket name
+
+Resources:
+  # S3 Bucket
+  MLOpsDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketName}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Name
+          Value: MLOps Data Bucket
+
+  # Security Group for EC2
+  MLOpsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for MLOps API EC2 instance
+      SecurityGroupIngress:
+        # SSH
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        # HTTP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # API Port
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: MLOps Security Group
+
+  # IAM Role for EC2
+  MLOpsEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+
+  MLOpsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref MLOpsEC2Role
+
+  # EC2 Instance
+  MLOpsEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c55b159cbfafe1f0  # Ubuntu 22.04 LTS in us-east-1
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref MLOpsSecurityGroup
+      IamInstanceProfile: !Ref MLOpsInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          
+          # Update system
+          apt-get update
+          apt-get upgrade -y
+          
+          # Install Docker
+          apt-get install -y docker.io
+          
+          # Add ubuntu user to docker group
+          usermod -aG docker ubuntu
+          
+          # Start Docker service
+          systemctl start docker
+          systemctl enable docker
+          
+          # Wait a moment for Docker to be ready
+          sleep 10
+          
+          # Pull and run the API container
+          docker pull gondal2003/mlops-app:v1
+          docker run -d -p 8000:8000 --name mlops-api gondal2003/mlops-app:v1
+          
+          # Log completion
+          echo "Deployment completed at $(date)" >> /var/log/mlops-deployment.log
+      Tags:
+        - Key: Name
+          Value: mlops-api-server
+      Monitoring: true
+
+Outputs:
+  S3BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref MLOpsDataBucket
+    Export:
+      Name: MLOpsDataBucket
+
+  S3BucketUrl:
+    Description: S3 Bucket URL
+    Value: !Sub 'https://${MLOpsDataBucket}.s3.amazonaws.com'
+    Export:
+      Name: MLOpsDataBucketUrl
+
+  EC2InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref MLOpsEC2Instance
+    Export:
+      Name: MLOpsEC2InstanceId
+
+  EC2PublicIP:
+    Description: Public IP of EC2 instance
+    Value: !GetAtt MLOpsEC2Instance.PublicIp
+    Export:
+      Name: MLOpsEC2PublicIP
+
+  APIEndpoint:
+    Description: API endpoint URL
+    Value: !Sub 'http://${MLOpsEC2Instance.PublicIp}:8000'
+    Export:
+      Name: MLOpsAPIEndpoint
+
+  SwaggerUIUrl:
+    Description: Swagger UI URL for API testing
+    Value: !Sub 'http://${MLOpsEC2Instance.PublicIp}:8000/docs'
+    Export:
+      Name: MLOpsSwaggerUI
+
+  SSHCommand:
+    Description: SSH command to connect to instance
+    Value: !Sub 'ssh -i your-key.pem ubuntu@${MLOpsEC2Instance.PublicIp}'
